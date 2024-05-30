@@ -1,0 +1,116 @@
+#!/bin/bash
+# Verzeichnis des Skripts ermitteln
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TOKEN_FILE="$SCRIPT_DIR/withings_tokens.json"
+WITHINGS_WERTE="$SCRIPT_DIR/withings_werte"
+
+# API-Details
+CLIENT_ID="my_client_id"
+CLIENT_SECRET="my_client_secret"
+REDIRECT_URI="my_redirect_uri"
+
+# Icons
+STEPS_ICON="👣"
+WEIGHT_ICON="⚖"
+
+# Funktion zum Token Refresh
+refresh_token() {
+	local refresh_token=$1
+	response=$(curl -s --data "action=requesttoken&grant_type=refresh_token&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&refresh_token=$refresh_token" 'https://wbsapi.withings.net/v2/oauth2')
+	echo $response | jq . > $TOKEN_FILE
+}
+
+initialize_auth() {
+  echo "Öffne die folgende URL in deinem Browser und autorisiere die Anwendung:"
+  echo "https://account.withings.com/oauth2_user/authorize2?response_type=code&client_id=$CLIENT_ID&redirect_uri=$REDIRECT_URI&scope=user.info,user.metrics,user.activity&state=withingsterminal"
+
+  read -p "Gib den Auth-Code aus der URL hier ein: " auth_code
+
+  response=$(curl -s --data "action=requesttoken&grant_type=authorization_code&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&code=$auth_code&redirect_uri=$REDIRECT_URI" 'https://wbsapi.withings.net/v2/oauth2')
+
+  if echo "$response" | grep -q "error"; then
+    echo "Failed to get tokens, API status code: $response"
+    exit 1
+  fi
+
+  echo "$response" | jq . > $TOKEN_FILE
+}
+
+check_refresh_needed() {
+  response=$(curl -s --header "Authorization: Bearer $access_token" --data "action=getgoals" 'https://wbsapi.withings.net/v2/user')
+  if echo "$response" | grep -q "error"; then
+        refresh_token $refresh_token
+	access_token=$(jq -r '.body.access_token' $TOKEN_FILE)
+	refresh_token=$(jq -r '.body.refresh_token' $TOKEN_FILE)
+  fi
+}
+
+# Token aus Datei lesen oder initial refreshen
+if [ -f "$TOKEN_FILE" ]; then
+	access_token=$(jq -r '.body.access_token' $TOKEN_FILE)
+	refresh_token=$(jq -r '.body.refresh_token' $TOKEN_FILE)
+	check_refresh_needed
+else
+	initialize_auth
+	access_token=$(jq -r '.body.access_token' $TOKEN_FILE)
+	refresh_token=$(jq -r '.body.refresh_token' $TOKEN_FILE)
+fi
+
+# Funktion zur Abfrage der Gewichtsdaten
+get_weight() {
+	startdate=$(date -d '1 month ago' +%s)
+	enddate=$(date +%s) # Enddatum: jetzt
+	response=$(curl -s --header "Authorization: Bearer $access_token" --data "action=getmeas&meastype=1&meastypes=1,4,12&category=1&startdate=$startdate&enddate=$enddate&lastupdate=$startdate&offset=0" 'https://wbsapi.withings.net/measure')
+	latest_weight=$(echo $response | jq -r '.body.measuregrps | sort_by(.date) | last')
+	weight_measure=$(echo $latest_weight | jq -r '.measures[] | select(.type == 1)')
+	weight_value=$(echo $weight_measure | jq -r '.value')
+	unit_value=$(echo $weight_measure | jq -r '.unit')
+	unit_value=$(echo "${unit_value#-}")
+	scaling_factor=$((10 ** unit_value))
+	#weight=$((weight_value / scaling_factor))
+	weight=$(echo "scale=3; $weight_value / $scaling_factor" | bc)
+	echo $weight
+}
+
+# Funktion zur Abfrage der Schrittzahl
+get_steps() {
+	startdate=$(date -d 'today 00:00:00' +%s) # Startdatum: heute ab 0:00 Uhr
+	enddate=$(date -d 'tomorrow 23:00:00' +%s) # Enddatum: morgen ab 0:00 Uhr
+	response=$(curl -s --header "Authorization: Bearer $access_token" --data "action=getactivity&startdateymd=$(date -d @$startdate +%Y-%m-%d)&enddateymd=$(date -d @$enddate +%Y-%m-%d)" 'https://wbsapi.withings.net/v2/measure')
+	steps=$(echo $response | jq '.body.activities[0].steps')
+	echo $steps
+}
+
+# Argumente prüfen und entsprechende Funktion aufrufen
+while getopts ":wsli" option; do
+	case $option in
+		w)
+			if [ "$OPTIND" -gt 1 ] && [ "${!OPTIND}" = "-i" ]; then
+				echo $(get_weight)$WEIGHT_ICON
+			else 
+				get_weight
+			fi
+			;;
+		s)
+			if [ "$OPTIND" -gt 1 ] && [ "${!OPTIND}" = "-i" ]; then
+				echo $(get_steps)$STEPS_ICON
+			else 
+				get_steps
+			fi
+			;;
+		l)
+			if [ "$OPTIND" -gt 1 ] && [ "${!OPTIND}" = "-i" ]; then
+				echo $(get_weight)$WEIGHT_ICON $(get_steps)$STEPS_ICON > $WITHINGS_WERTE
+			else 
+				echo $(get_weight) $(get_steps) > $WITHINGS_WERTE
+			fi
+			;;
+		i)
+			;;
+		*)
+			echo "Usage: $0 [-w] [-s]"
+			exit 1
+			;;
+	esac
+done
