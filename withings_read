@@ -1,20 +1,16 @@
 #!/bin/bash
-# Verzeichnis des Skripts ermitteln
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TOKEN_FILE="$SCRIPT_DIR/withings_tokens.json"
 WITHINGS_WERTE="$SCRIPT_DIR/withings_werte"
 
-# API-Details
 CLIENT_ID="my_client_id"
 CLIENT_SECRET="my_client_secret"
 REDIRECT_URI="my_redirect_uri"
 
-# Icons
 STEPS_ICON="👣"
 WEIGHT_ICON="⚖"
 
-# Funktion zum Token Refresh
 refresh_token() {
 	local refresh_token=$1
 	response=$(curl -s --data "action=requesttoken&grant_type=refresh_token&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&refresh_token=$refresh_token" 'https://wbsapi.withings.net/v2/oauth2')
@@ -46,7 +42,6 @@ check_refresh_needed() {
   fi
 }
 
-# Token aus Datei lesen oder initial refreshen
 if [ -f "$TOKEN_FILE" ]; then
 	access_token=$(jq -r '.body.access_token' $TOKEN_FILE)
 	refresh_token=$(jq -r '.body.refresh_token' $TOKEN_FILE)
@@ -57,10 +52,9 @@ else
 	refresh_token=$(jq -r '.body.refresh_token' $TOKEN_FILE)
 fi
 
-# Funktion zur Abfrage der Gewichtsdaten
 get_weight() {
 	startdate=$(date -d '1 month ago' +%s)
-	enddate=$(date +%s) # Enddatum: jetzt
+	enddate=$(date +%s) 
 	response=$(curl -s --header "Authorization: Bearer $access_token" --data "action=getmeas&meastype=1&meastypes=1,4,12&category=1&startdate=$startdate&enddate=$enddate&lastupdate=$startdate&offset=0" 'https://wbsapi.withings.net/measure')
 	latest_weight=$(echo $response | jq -r '.body.measuregrps | sort_by(.date) | last')
 	weight_measure=$(echo $latest_weight | jq -r '.measures[] | select(.type == 1)')
@@ -68,21 +62,18 @@ get_weight() {
 	unit_value=$(echo $weight_measure | jq -r '.unit')
 	unit_value=$(echo "${unit_value#-}")
 	scaling_factor=$((10 ** unit_value))
-	#weight=$((weight_value / scaling_factor))
 	weight=$(echo "scale=3; $weight_value / $scaling_factor" | bc)
 	echo $weight
 }
 
-# Funktion zur Abfrage der Schrittzahl
 get_steps() {
-	startdate=$(date -d 'today 00:00:00' +%s) # Startdatum: heute ab 0:00 Uhr
-	enddate=$(date -d 'tomorrow 23:00:00' +%s) # Enddatum: morgen ab 0:00 Uhr
+	startdate=$(date -d 'today 00:00:00' +%s) 
+	enddate=$(date -d 'tomorrow 23:00:00' +%s) 
 	response=$(curl -s --header "Authorization: Bearer $access_token" --data "action=getactivity&startdateymd=$(date -d @$startdate +%Y-%m-%d)&enddateymd=$(date -d @$enddate +%Y-%m-%d)" 'https://wbsapi.withings.net/v2/measure')
 	steps=$(echo $response | jq '.body.activities[0].steps')
 	echo $steps
 }
 
-# Argumente prüfen und entsprechende Funktion aufrufen
 while getopts ":wsli" option; do
 	case $option in
 		w)
@@ -109,7 +100,7 @@ while getopts ":wsli" option; do
 		i)
 			;;
 		*)
-			echo "Usage: $0 [-w] [-s]"
+			echo "Usage: $0 [-w] [-s] [-l] [-i]"
 			exit 1
 			;;
 	esac
