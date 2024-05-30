@@ -18,7 +18,7 @@ refresh_token() {
 }
 
 initialize_auth() {
-  echo "Öffne die folgende URL in deinem Browser und autorisiere die Anwendung:"
+  echo "Open the following URL in your browser and authorize the application:"
   echo "https://account.withings.com/oauth2_user/authorize2?response_type=code&client_id=$CLIENT_ID&redirect_uri=$REDIRECT_URI&scope=user.info,user.metrics,user.activity&state=withingsterminal"
 
   read -p "Gib den Auth-Code aus der URL hier ein: " auth_code
